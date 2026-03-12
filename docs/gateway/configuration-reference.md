@@ -1029,14 +1029,14 @@ Periodic heartbeat runs.
 
 ### `agents.defaults.contextPruning`
 
-Prunes **old tool results** from in-memory context before sending to the LLM. Does **not** modify session history on disk.
+在发送给 LLM 之前，从内存中的上下文裁剪 **旧的 tool result**。**不会** 修改磁盘上的会话历史。
 
 ```json5
 {
   agents: {
     defaults: {
       contextPruning: {
-        mode: "cache-ttl", // off | cache-ttl
+        mode: "cache-ttl", // off | cache-ttl | semantic-compression
         ttl: "1h", // duration (ms/s/m/h), default unit: minutes
         keepLastAssistants: 3,
         softTrimRatio: 0.3,
@@ -1045,31 +1045,64 @@ Prunes **old tool results** from in-memory context before sending to the LLM. Do
         softTrim: { maxChars: 4000, headChars: 1500, tailChars: 1500 },
         hardClear: { enabled: true, placeholder: "[Old tool result content cleared]" },
         tools: { deny: ["browser", "canvas"] },
+        // 仅在 mode 为 "semantic-compression" 时使用：
+        semanticCompression: {
+          triggerRatio: 0.5,
+          keepLastUserTurns: 3,
+          minCompressibleChars: 500,
+          compressByInteractionBlock: true,
+          customInstructions: "",
+        },
       },
     },
   },
 }
 ```
 
-<Accordion title="cache-ttl mode behavior">
+<Accordion title="cache-ttl 模式行为">
 
-- `mode: "cache-ttl"` enables pruning passes.
-- `ttl` controls how often pruning can run again (after the last cache touch).
-- Pruning soft-trims oversized tool results first, then hard-clears older tool results if needed.
+- `mode: "cache-ttl"` 启用裁剪流程。
+- `ttl` 控制裁剪可再次运行的频率（自上次缓存触达起算）。
+- 裁剪先对超大的 tool result 执行 soft-trim，必要时再对更早的 tool result 执行 hard-clear。
 
-**Soft-trim** keeps beginning + end and inserts `...` in the middle.
+**Soft-trim** 保留头部 + 尾部，中间插入 `...`。
 
-**Hard-clear** replaces the entire tool result with the placeholder.
+**Hard-clear** 用占位符替换整个 tool result。
 
-Notes:
+注意事项：
 
-- Image blocks are never trimmed/cleared.
-- Ratios are character-based (approximate), not exact token counts.
-- If fewer than `keepLastAssistants` assistant messages exist, pruning is skipped.
+- image blocks 永远不会被裁剪/清除。
+- 比例基于字符数（近似值），不是精确的 token 计数。
+- 如果 assistant 消息数量少于 `keepLastAssistants`，则跳过裁剪。
 
 </Accordion>
 
-See [Session Pruning](/concepts/session-pruning) for behavior details.
+<Accordion title="semantic-compression 模式行为">
+
+- `mode: "semantic-compression"` 启用基于 LLM 的上下文压缩。
+- 当上下文使用量超过 `semanticCompression.triggerRatio` × 上下文窗口时，旧的交互记录会被发送给模型进行摘要。
+- 压缩 **异步** 运行；当前请求回退到启发式裁剪。压缩结果被缓存，在 **下一次** 请求时应用。
+
+**`semanticCompression` 字段：**
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `triggerRatio` | `number` (0–1) | `0.5` | 触发压缩的上下文使用比例。 |
+| `keepLastUserTurns` | `number` | `3` | 受保护不被压缩的最近用户轮次数。 |
+| `minCompressibleChars` | `number` | `500` | 交互块/tool-result 可被压缩的最小字符数。 |
+| `compressByInteractionBlock` | `boolean` | `true` | `true`：将整个交互块（用户 + 所有 assistant/tool 轮次）作为整体压缩。`false`：独立压缩每条 tool result。 |
+| `customInstructions` | `string` | `""` | 追加到压缩 prompt 中的额外指令。 |
+
+注意事项：
+
+- 引导阶段消息（第一条用户消息之前）永远不会被压缩。
+- 包含错误 tool result 的交互块保持原样。
+- 已压缩的块（前缀为 `[semantically compressed]`）会被跳过。
+- Prompt 模板存储在 `src/agents/pi-extensions/context-pruning/prompts/`，可直接编辑无需修改代码。
+
+</Accordion>
+
+参见 [Session Pruning](/concepts/session-pruning) 了解行为详情。
 
 ### Block streaming
 

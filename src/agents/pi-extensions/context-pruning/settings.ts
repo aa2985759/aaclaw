@@ -4,7 +4,28 @@ export type ContextPruningToolMatch = {
   allow?: string[];
   deny?: string[];
 };
-export type ContextPruningMode = "off" | "cache-ttl";
+export type ContextPruningMode = "off" | "cache-ttl" | "semantic-compression";
+
+export type SemanticCompressionConfig = {
+  /** Context ratio threshold to trigger semantic compression (default: 0.5). */
+  triggerRatio?: number;
+  /** Number of recent user turns to protect from compression (default: 3). */
+  keepLastUserTurns?: number;
+  /** Minimum character length of a tool result to be eligible for compression (default: 500). */
+  minCompressibleChars?: number;
+  /** Whether to compress per-interaction-block (true) or per-tool-result (false). Default: true. */
+  compressByInteractionBlock?: boolean;
+  /** Custom instructions appended to the compression prompt. */
+  customInstructions?: string;
+};
+
+export type EffectiveSemanticCompressionSettings = {
+  triggerRatio: number;
+  keepLastUserTurns: number;
+  minCompressibleChars: number;
+  compressByInteractionBlock: boolean;
+  customInstructions: string;
+};
 
 export type ContextPruningConfig = {
   mode?: ContextPruningMode;
@@ -24,6 +45,8 @@ export type ContextPruningConfig = {
     enabled?: boolean;
     placeholder?: string;
   };
+  /** Semantic compression settings (only used when mode is "semantic-compression"). */
+  semanticCompression?: SemanticCompressionConfig;
 };
 
 export type EffectiveContextPruningSettings = {
@@ -43,6 +66,15 @@ export type EffectiveContextPruningSettings = {
     enabled: boolean;
     placeholder: string;
   };
+  semanticCompression: EffectiveSemanticCompressionSettings;
+};
+
+export const DEFAULT_SEMANTIC_COMPRESSION_SETTINGS: EffectiveSemanticCompressionSettings = {
+  triggerRatio: 0.5,
+  keepLastUserTurns: 3,
+  minCompressibleChars: 500,
+  compressByInteractionBlock: true,
+  customInstructions: "",
 };
 
 export const DEFAULT_CONTEXT_PRUNING_SETTINGS: EffectiveContextPruningSettings = {
@@ -62,6 +94,7 @@ export const DEFAULT_CONTEXT_PRUNING_SETTINGS: EffectiveContextPruningSettings =
     enabled: true,
     placeholder: "[Old tool result content cleared]",
   },
+  semanticCompression: { ...DEFAULT_SEMANTIC_COMPRESSION_SETTINGS },
 };
 
 export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningSettings | null {
@@ -69,7 +102,7 @@ export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningS
     return null;
   }
   const cfg = raw as ContextPruningConfig;
-  if (cfg.mode !== "cache-ttl") {
+  if (cfg.mode !== "cache-ttl" && cfg.mode !== "semantic-compression") {
     return null;
   }
 
@@ -116,6 +149,26 @@ export function computeEffectiveSettings(raw: unknown): EffectiveContextPruningS
     }
     if (typeof cfg.hardClear.placeholder === "string" && cfg.hardClear.placeholder.trim()) {
       s.hardClear.placeholder = cfg.hardClear.placeholder.trim();
+    }
+  }
+
+  // Parse semantic compression settings
+  if (cfg.semanticCompression) {
+    const sc = cfg.semanticCompression;
+    if (typeof sc.triggerRatio === "number" && Number.isFinite(sc.triggerRatio)) {
+      s.semanticCompression.triggerRatio = Math.min(1, Math.max(0, sc.triggerRatio));
+    }
+    if (typeof sc.keepLastUserTurns === "number" && Number.isFinite(sc.keepLastUserTurns)) {
+      s.semanticCompression.keepLastUserTurns = Math.max(0, Math.floor(sc.keepLastUserTurns));
+    }
+    if (typeof sc.minCompressibleChars === "number" && Number.isFinite(sc.minCompressibleChars)) {
+      s.semanticCompression.minCompressibleChars = Math.max(0, Math.floor(sc.minCompressibleChars));
+    }
+    if (typeof sc.compressByInteractionBlock === "boolean") {
+      s.semanticCompression.compressByInteractionBlock = sc.compressByInteractionBlock;
+    }
+    if (typeof sc.customInstructions === "string") {
+      s.semanticCompression.customInstructions = sc.customInstructions.trim();
     }
   }
 
